@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualization - AI in Health Ed Categorizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f7fafc; }
+        .card { box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05); }
+        .chart-wrap { height: 260px; }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen bg-gray-100">
+    <div class="max-w-5xl mx-auto">
+        <div class="flex items-center justify-between mb-6">
+            <div class="space-x-2">
+                <a id="homeLink" href="/" class="inline-block bg-indigo-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-indigo-700 transition">Home</a>
+                <a id="adminLink" href="/admin" class="inline-block bg-slate-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-slate-700 transition">Admin</a>
+            </div>
+            <h1 class="text-2xl md:text-3xl font-extrabold text-indigo-700">Visualization</h1>
+        </div>
+
+        <div id="chartsContainer" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+        const urlParams = new URLSearchParams(window.location.search);
+        const presentation = urlParams.get('p') || 'default';
+
+        // Wire links with ?p=
+        const homeLink = document.getElementById('homeLink');
+        const adminLink = document.getElementById('adminLink');
+        homeLink.href = `/${presentation ? `?p=${encodeURIComponent(presentation)}` : ''}`;
+        adminLink.href = `/admin${presentation ? `?p=${encodeURIComponent(presentation)}` : ''}`;
+
+        const chartsByQuestion = {};
+        const chartsContainer = document.getElementById('chartsContainer');
+
+        async function init() {
+            try {
+                const qRes = await fetch(`${API_BASE_URL}/questions?p=${encodeURIComponent(presentation)}`);
+                if (!qRes.ok) throw new Error('Failed to load questions');
+                const questions = await qRes.json();
+
+                if (!Array.isArray(questions) || questions.length === 0) {
+                    chartsContainer.innerHTML = '<p class="text-center text-gray-500">No questions available.</p>';
+                    return;
+                }
+
+                chartsContainer.innerHTML = '';
+                for (const [idx, q] of questions.entries()) {
+                    const card = document.createElement('div');
+                    card.className = 'card bg-white p-6 rounded-xl';
+
+                    const title = document.createElement('h2');
+                    title.className = 'text-xl font-semibold text-gray-800 mb-2';
+                    title.textContent = `Question ${idx + 1}`;
+
+                    const qText = document.createElement('p');
+                    qText.className = 'text-lg mb-4 italic text-gray-600';
+                    qText.textContent = q;
+
+                    const chartWrap = document.createElement('div');
+                    chartWrap.className = 'chart-wrap';
+                    const canvas = document.createElement('canvas');
+                    chartWrap.appendChild(canvas);
+
+                    card.appendChild(title);
+                    card.appendChild(qText);
+                    card.appendChild(chartWrap);
+                    chartsContainer.appendChild(card);
+
+                    await renderChartForQuestion(q, canvas);
+                }
+            } catch (e) {
+                console.error(e);
+                chartsContainer.innerHTML = '<p class="text-center text-red-500">Failed to load visualization.</p>';
+            }
+        }
+
+        async function renderChartForQuestion(question, canvasEl) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/categories?p=${encodeURIComponent(presentation)}&question=${encodeURIComponent(question)}`);
+                if (!res.ok) throw new Error('Failed categories');
+                const categoriesMap = await res.json();
+
+                const labels = Object.keys(categoriesMap).sort();
+                const counts = labels.map(label => (categoriesMap[label] || []).length);
+                const chartKey = `${presentation}::${question}`;
+
+                const data = {
+                    labels,
+                    datasets: [{
+                        label: 'Responses',
+                        data: counts,
+                        backgroundColor: 'rgba(79, 70, 229, 0.4)',
+                        borderColor: 'rgba(79, 70, 229, 1)',
+                        borderWidth: 1,
+                    }]
+                };
+
+                if (chartsByQuestion[chartKey]) {
+                    const chart = chartsByQuestion[chartKey];
+                    chart.data = data;
+                    chart.update();
+                } else {
+                    const ctx = canvasEl.getContext('2d');
+                    chartsByQuestion[chartKey] = new Chart(ctx, {
+                        type: 'bar',
+                        data,
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+                            plugins: { legend: { display: false }, title: { display: false } }
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error(e);
+                const ctx = canvasEl.getContext('2d');
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#ef4444';
+                ctx.fillText('Failed to load data', 10, 20);
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
+

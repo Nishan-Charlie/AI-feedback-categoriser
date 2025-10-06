@@ -2,20 +2,31 @@ import json
 import os
 import requests
 import uvicorn
+import secrets
+import csv
 from typing import Dict, List
+from fastapi import Query
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, RedirectResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
 
 # --- Configuration ---
-# NOTE: Replace with your actual Gemini API Key or use environment variables
-GEMINI_API_KEY = "AIzaSyBdAQF9bXFjlfg9UjqFSaDzdmDSXfVZp00"
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBdAQF9bXFjlfg9UjqFSaDzdmDSXfVZp00")
 API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent"
 DATA_FILE = "data_store.json"
+QUESTIONS_FILE = "questions.json"
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 
 app = FastAPI(title="AI Health Education Categorizer")
+templates = Jinja2Templates(directory=".")
+
+# In-memory session management (replace with a more robust solution for production)
+sessions = {}
 
 # Allow the frontend (index.html) to communicate with the backend
 app.add_middleware(
@@ -31,6 +42,7 @@ app.add_middleware(
 class AnswerInput(BaseModel):
     """Input model for the user's open-ended answer."""
     answer: str = Field(..., description="The user's response to the AI in health sciences education question.")
+    question: str | None = Field(None, description="The question this answer is responding to.")
 
 class CategorizationResult(BaseModel):
     """Expected structured output from the Gemini model."""
@@ -46,24 +58,84 @@ class APIResponse(BaseModel):
 
 # --- Data Persistence Functions ---
 
-def load_data() -> Dict[str, Dict[str, List[str]]]:
-    """Loads categories and answers from the JSON file."""
+def load_data() -> Dict:
+    """Loads data from the JSON file and migrates to presentations model if needed.
+
+    Target schema:
+    {
+      "presentations": {
+        "default": {
+          "categories_by_question": {
+            "Question text": { category: [answers] }
+          }
+        }
+      }
+    }
+    """
     if not os.path.exists(DATA_FILE):
-        return {"categories": {}}
+        return {"presentations": {"default": {"categories_by_question": {}}}}
     try:
         with open(DATA_FILE, 'r') as f:
-            return json.load(f)
+            data = json.load(f)
     except json.JSONDecodeError:
         print("Warning: data_store.json is corrupted. Starting with empty data.")
-        return {"categories": {}}
+        return {"presentations": {"default": {"categories_by_question": {}}}}
+
+    # Migrate older schema {"categories": {...}} → presentations.default.categories_by_question["General"]
+    if isinstance(data, dict) and "presentations" not in data:
+        categories = data.get("categories", {}) if isinstance(data, dict) else {}
+        data = {"presentations": {"default": {"categories_by_question": {"General": categories}}}}
+
+    # Ensure required keys
+    data.setdefault("presentations", {})
+    data["presentations"].setdefault("default", {"categories_by_question": {}})
+    data["presentations"]["default"].setdefault("categories_by_question", {})
+
+    # Further migrate from presentations.default.categories → categories_by_question.General if present
+    default_p = data["presentations"].get("default", {})
+    if "categories" in default_p and isinstance(default_p.get("categories"), dict):
+        existing = default_p.get("categories", {})
+        cbq = default_p.setdefault("categories_by_question", {})
+        if "General" not in cbq:
+            cbq["General"] = existing
+        del default_p["categories"]
+    return data
 
 def save_data(data: Dict):
     """Saves the current state of categories and answers to the JSON file."""
     with open(DATA_FILE, 'w') as f:
         json.dump(data, f, indent=2)
 
+def load_questions() -> Dict[str, List[str]]:
+    """Loads questions per presentation from the JSON file, migrating if needed.
+
+    Target schema: { presentationName: [questions] }
+    """
+    if not os.path.exists(QUESTIONS_FILE):
+        return {"default": []}
+    try:
+        with open(QUESTIONS_FILE, 'r') as f:
+            data = json.load(f)
+    except json.JSONDecodeError:
+        print("Warning: questions.json is corrupted. Starting with empty data.")
+        return {"default": []}
+
+    # Migrate from list → {"default": list}
+    if isinstance(data, list):
+        return {"default": data}
+    if isinstance(data, dict):
+        data.setdefault("default", [])
+        return data
+    return {"default": []}
+
+def save_questions(questions_by_presentation: Dict[str, List[str]]):
+    """Saves the current state of questions per presentation to the JSON file."""
+    with open(QUESTIONS_FILE, 'w') as f:
+        json.dump(questions_by_presentation, f, indent=2)
+
 # Load data when the application starts
 data_store = load_data()
+questions_store = load_questions()
 
 # --- Gemini Logic ---
 
@@ -72,13 +144,6 @@ def call_gemini_for_categorization(user_answer: str, existing_categories: List[s
     Calls the Gemini API to categorize the user's answer.
     It uses a structured response (JSON schema) to ensure reliable parsing.
     """
-    # Comments appended here as requested:
-    # ------------------------------------
-    # It uses a structured response (JSON schema) to ensure reliable parsing.
-    # Retry logic (exponential backoff not explicitly implemented here for brevity,
-    # but highly recommended in production).
-    # ------------------------------------
-    
     current_categories_list = ", ".join(existing_categories)
     
     system_prompt = f"""You are an AI Categorization Engine for academic interests. 
@@ -117,7 +182,6 @@ def call_gemini_for_categorization(user_answer: str, existing_categories: List[s
         response = requests.post(f"{API_URL}?key={GEMINI_API_KEY}", headers=headers, json=payload)
         response.raise_for_status()
         
-        # Parse the response to get the structured JSON text
         result = response.json()
         json_text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text')
 
@@ -138,18 +202,46 @@ def call_gemini_for_categorization(user_answer: str, existing_categories: List[s
 
 # --- FastAPI Endpoints ---
 
-@app.get("/")
-async def root():
-    """Simple health check endpoint."""
-    return {"message": "AI Health Education Categorizer API is running!", "status": "ok"}
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request, "questions": questions_store})
+
+# Convenience routes to ensure landing page resolves to index
+@app.get("/index")
+async def index_redirect():
+    return RedirectResponse(url="/", status_code=307)
+
+@app.get("/index.html")
+async def index_html_redirect():
+    return RedirectResponse(url="/", status_code=307)
+
+@app.get("/visualize", response_class=HTMLResponse)
+async def visualize_page(request: Request):
+    return templates.TemplateResponse("visualize.html", {"request": request})
+
+@app.get("/questions", response_model=List[str])
+async def get_questions(p: str = Query("default", alias="p")):
+    """Returns the list of questions for a presentation."""
+    return questions_store.get(p, [])
 
 @app.get("/categories", response_model=Dict[str, List[str]])
-async def get_categories():
-    """Returns the current list of categories and their answers."""
-    return data_store.get("categories", {})
+async def get_categories(p: str = Query("default", alias="p"), question: str = Query("General", alias="question")):
+    """Returns categories and answers for a presentation and question."""
+    presentation = data_store.get("presentations", {}).get(p)
+    if not presentation:
+        return {}
+    return presentation.get("categories_by_question", {}).get(question, {})
+
+@app.get("/categories_by_question")
+async def get_categories_by_question(p: str = Query("default", alias="p")) -> Dict[str, Dict[str, List[str]]]:
+    """Returns a mapping of question -> categories for a presentation."""
+    presentation = data_store.get("presentations", {}).get(p)
+    if not presentation:
+        return {}
+    return presentation.get("categories_by_question", {})
 
 @app.post("/categorize", response_model=APIResponse)
-async def categorize_answer(input_data: AnswerInput):
+async def categorize_answer(input_data: AnswerInput, p: str = Query("default", alias="p")):
     """
     Processes a new user answer, calls Gemini for categorization,
     and updates the persistent data store.
@@ -161,28 +253,27 @@ async def categorize_answer(input_data: AnswerInput):
     if not user_answer:
         raise HTTPException(status_code=400, detail="Answer cannot be empty.")
 
-    categories_data = data_store["categories"]
+    # Ensure presentation exists
+    presentations = data_store.setdefault("presentations", {})
+    presentation = presentations.setdefault(p, {"categories_by_question": {}})
+    categories_by_question = presentation.setdefault("categories_by_question", {})
+
+    question_text = (input_data.question or "General").strip() or "General"
+    categories_data = categories_by_question.setdefault(question_text, {})
     existing_category_names = list(categories_data.keys())
 
-    # 1. Call Gemini to get the structured categorization
     categorization = call_gemini_for_categorization(user_answer, existing_category_names)
     
     category = categorization.category_name.strip()
     is_new = categorization.is_new
     
-    # 2. Update the data store based on the model's output
-    
-    # Check if the category key exists in the current data structure
     if category not in categories_data:
-        # If the category is genuinely new (key not found), initialize it
         categories_data[category] = []
-        is_new = True # Force 'is_new' to True if the key was missing for accurate API response
+        is_new = True
 
-    # Append the new answer to the list associated with the category
     categories_data[category].append(user_answer)
     save_data(data_store)
 
-    # 3. Prepare response
     return APIResponse(
         message=f"Answer successfully categorized under: '{category}'",
         category=category,
@@ -190,8 +281,79 @@ async def categorize_answer(input_data: AnswerInput):
         all_categories=categories_data
     )
 
+# --- Admin Section ---
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+@app.post("/login")
+async def login(request: Request, password: str = Form(...)):
+    if password == ADMIN_PASSWORD:
+        session_id = secrets.token_urlsafe(16)
+        sessions[session_id] = {"authenticated": True}
+        response = RedirectResponse(url="/admin", status_code=303)
+        # Ensure cookie is scoped correctly and survives the redirect
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            path="/",
+            httponly=True,
+            samesite="lax"
+        )
+        return response
+    return RedirectResponse(url="/login", status_code=303)
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    session_id = request.cookies.get("session_id")
+    if session_id and sessions.get(session_id, {}).get("authenticated"):
+        return templates.TemplateResponse("admin.html", {"request": request, "questions": questions_store})
+    return RedirectResponse(url="/login", status_code=303)
+
+# Handle trailing slash for admin as well
+@app.get("/admin/")
+async def admin_trailing_slash():
+    return RedirectResponse(url="/admin", status_code=307)
+
+@app.post("/admin/add_question")
+async def add_question(request: Request, question: str = Form(...), p: str = Query("default", alias="p")):
+    session_id = request.cookies.get("session_id")
+    if not (session_id and sessions.get(session_id, {}).get("authenticated")):
+        return RedirectResponse(url="/login", status_code=303)
+
+    questions_for_presentation = questions_store.setdefault(p, [])
+    questions_for_presentation.append(question)
+    save_questions(questions_store)
+    return RedirectResponse(url="/admin?p=" + p, status_code=303)
+
+@app.get("/admin/download_csv")
+async def download_csv(request: Request, p: str = Query("default", alias="p")):
+    session_id = request.cookies.get("session_id")
+    if not (session_id and sessions.get(session_id, {}).get("authenticated")):
+        return RedirectResponse(url="/login", status_code=303)
+
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Question', 'Category', 'Answer'])
+    categories_by_question = data_store.get("presentations", {}).get(p, {}).get("categories_by_question", {})
+    for q_text, categories in categories_by_question.items():
+        for category, answers in categories.items():
+            for answer in answers:
+                writer.writerow([q_text, category, answer])
+    
+    return HTMLResponse(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=data.csv"})
+
+@app.get("/logout")
+async def logout(request: Request):
+    session_id = request.cookies.get("session_id")
+    if session_id in sessions:
+        del sessions[session_id]
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(key="session_id")
+    return response
+
 # --- Startup command instruction ---
-# To run this server, save the file as main.py and run:
-# uvicorn main:app --reload
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

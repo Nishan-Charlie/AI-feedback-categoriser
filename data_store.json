@@ -1,14 +1,35 @@
 {
-  "categories": {
-    "Unspecified Interest": [
-      "hi"
-    ],
-    "Medical Imaging": [
-      "medical imaging"
-    ],
-    "Food": [
-      "nutrition",
-      "nutrition detection"
-    ]
+  "presentations": {
+    "default": {
+      "categories_by_question": {
+        "General": {
+          "Unspecified Interest": [
+            "hi",
+            "how are you"
+          ],
+          "Medical Imaging": [
+            "medical imaging",
+            "cancer detection using xray images"
+          ],
+          "Food": [
+            "nutrition",
+            "nutrition detection"
+          ]
+        },
+        "What aspect of AI in health sciences education are you most interested in?": {
+          "Unspecified Interest": [
+            "Hi"
+          ],
+          "Medical Imaging": [
+            "medical imaging"
+          ]
+        },
+        "How can we use AI safely in the health sector": {
+          "Unclear/Generic": [
+            "Hello"
+          ]
+        }
+      }
+    }
   }
 }

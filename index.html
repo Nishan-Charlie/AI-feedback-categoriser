@@ -7,6 +7,8 @@
     <title>AI in Health Ed: Categorizer</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+        <!-- QR Code library -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         /* Custom styles for aesthetic appeal */
         body {
@@ -44,35 +46,29 @@
 <body class="p-4 md:p-8 min-h-screen bg-gray-100 flex items-start justify-center">
 
     <div class="w-full max-w-4xl">
+        <div class="flex justify-end gap-2 mb-4">
+            <a id="vizLink" href="/visualize" class="inline-block bg-green-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-green-700 transition duration-150 ease-in-out">Visualization</a>
+            <a href="http://localhost:8000/login" class="inline-block bg-indigo-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-indigo-700 transition duration-150 ease-in-out">Admin</a>
+        </div>
         <header class="text-center mb-10">
             <h1 class="text-4xl font-extrabold text-indigo-700">AI in Health Ed Categorizer</h1>
             <p class="text-xl text-gray-500 mt-2">Use the power of Gemini and Structured Output to classify interests.
             </p>
         </header>
 
-        <!-- Main Input Card -->
-        <div id="input-card" class="card bg-white p-6 rounded-xl mb-10">
-            <h2 class="text-2xl font-semibold text-gray-800 mb-4">Question:</h2>
-            <p class="text-lg mb-4 italic text-gray-600">"What aspect of AI in health sciences education are you most
-                interested in?"</p>
-
-            <textarea id="user-answer"
-                class="w-full p-4 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 h-32 resize-none"
-                placeholder="e.g., I am fascinated by how AI can generate realistic patient simulations for surgical training, reducing the need for cadavers."
-                maxlength="500"></textarea>
-
-            <button id="submit-button"
-                class="mt-4 w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition duration-150 ease-in-out focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50 disabled:opacity-50"
-                onclick="submitAnswer()">
-                Categorize My Interest
-            </button>
-
-            <!-- Message Box for Feedback -->
-            <div id="message-box" class="mt-4 p-3 rounded-lg hidden text-sm font-medium"></div>
+        <!-- QR Code (floating bottom-right) -->
+        <div class="fixed bottom-6 right-6 z-10">
+            <div class="card bg-white p-4 rounded-xl border border-gray-200 shadow-lg">
+                <p class="text-sm text-gray-600 mb-2 text-center">Scan to open this slide</p>
+                <div id="qr-code" class="flex justify-center"></div>
+            </div>
         </div>
 
+        <!-- Main Input Card -->
+        <div id="questions-container" class="space-y-8"></div>
+
         <!-- Categorized Results Card -->
-        <div id="results-card" class="card bg-white p-6 rounded-xl">
+        <div id="results-card" class="card bg-white p-6 rounded-xl" style="display:none">
             <div class="flex justify-between items-center mb-6">
                 <h2 class="text-2xl font-semibold text-gray-800">Categorized Interests (<span
                         id="category-count">0</span>)</h2>
@@ -101,10 +97,11 @@
     <script>
         // NOTE: Ensure your FastAPI server (main.py) is running on port 8000 for this to work.
         const API_BASE_URL = 'http://localhost:8000';
+        const urlParams = new URLSearchParams(window.location.search);
+        const presentation = urlParams.get('p') || 'default';
+        const pageUrl = `${API_BASE_URL}/?p=${encodeURIComponent(presentation)}`;
 
-        const submitButton = document.getElementById('submit-button');
-        const userAnswer = document.getElementById('user-answer');
-        const messageBox = document.getElementById('message-box');
+        const questionsContainer = document.getElementById('questions-container');
         const categoriesList = document.getElementById('categories-list');
         const categoryCount = document.getElementById('category-count');
 
@@ -144,11 +141,11 @@
         /**
          * Fetches all categories from the backend and renders them.
          */
-        async function fetchAndRenderCategories() {
+        async function fetchAndRenderCategories(question = 'General') {
             categoriesList.innerHTML = '<p class="text-center text-gray-500">Refreshing categories...</p>';
             categoryCount.textContent = '...';
             try {
-                const response = await fetch(`${API_BASE_URL}/categories`);
+                const response = await fetch(`${API_BASE_URL}/categories?p=${encodeURIComponent(presentation)}&question=${encodeURIComponent(question)}`);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
@@ -160,6 +157,86 @@
                 categoriesList.innerHTML = '<p class="text-center text-red-500">Could not connect to backend API.</p>';
                 categoryCount.textContent = '0';
             }
+        }
+
+        async function fetchAndRenderQuestions() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/questions?p=${encodeURIComponent(presentation)}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const questions = await response.json();
+                renderQuestionsBlocks(questions);
+
+            } catch (error) {
+                console.error('Error fetching questions:', error);
+                questionsContainer.innerHTML = '<p class="text-center text-red-500">Could not load questions.</p>';
+            }
+        }
+
+        function renderQuestionsBlocks(questions) {
+            questionsContainer.innerHTML = '';
+            if (!Array.isArray(questions) || questions.length === 0) {
+                questionsContainer.innerHTML = '<p class="text-center text-gray-500">No questions available. Please ask the admin to add one.</p>';
+                return;
+            }
+
+            questions.forEach((q, idx) => {
+                const card = document.createElement('div');
+                card.className = 'card bg-white p-6 rounded-xl';
+
+                const title = document.createElement('h2');
+                title.className = 'text-2xl font-semibold text-gray-800 mb-2';
+                title.textContent = `Question ${idx + 1}:`;
+
+                const qText = document.createElement('p');
+                qText.className = 'text-lg mb-4 italic text-gray-600';
+                qText.textContent = q;
+
+                const textarea = document.createElement('textarea');
+                textarea.className = 'w-full p-4 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 h-28 resize-none';
+                textarea.placeholder = 'Type your answer here...';
+                textarea.maxLength = 500;
+
+                const submit = document.createElement('button');
+                submit.className = 'mt-4 w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition duration-150 ease-in-out focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50 disabled:opacity-50';
+                submit.textContent = 'Categorize Answer';
+                submit.onclick = async () => submitAnswerForQuestion(q, textarea, submit);
+
+                const msg = document.createElement('div');
+                msg.className = 'mt-4 p-3 rounded-lg hidden text-sm font-medium';
+
+                // Per-question categories section
+                const results = document.createElement('div');
+                results.className = 'card bg-white p-4 rounded-xl mt-6 border border-gray-200';
+                const resultsHeader = document.createElement('div');
+                resultsHeader.className = 'flex justify-between items-center mb-4';
+                const resultsTitle = document.createElement('h3');
+                resultsTitle.className = 'text-xl font-semibold text-gray-800';
+                resultsTitle.textContent = 'Categorized Interests';
+                const counterLabel = document.createElement('span');
+                counterLabel.innerHTML = '(<span class="font-mono" id="cnt">0</span>)';
+                resultsHeader.appendChild(resultsTitle);
+                resultsHeader.appendChild(counterLabel);
+                const categoriesForQ = document.createElement('div');
+                categoriesForQ.className = 'space-y-4';
+                results.appendChild(resultsHeader);
+                results.appendChild(categoriesForQ);
+
+                // No charts on home page
+
+                card.appendChild(title);
+                card.appendChild(qText);
+                card.appendChild(textarea);
+                card.appendChild(submit);
+                card.appendChild(msg);
+                card.appendChild(results);
+
+                questionsContainer.appendChild(card);
+
+                // Initial load for this question
+                fetchAndRenderCategoriesFor(q, categoriesForQ, counterLabel.querySelector('#cnt'));
+            });
         }
 
         function renderCategories(categories, highlightCategory = null) {
@@ -205,58 +282,150 @@
             });
         }
 
-        /**
-         * Handles the form submission and categorization process.
-         */
-        async function submitAnswer() {
-            const answerText = userAnswer.value.trim();
-            if (!answerText) {
-                showMessage("Please enter your interest before submitting.", 'error');
+        async function fetchAndRenderCategoriesFor(question, listContainerEl, countEl) {
+            listContainerEl.innerHTML = '<p class="text-center text-gray-500">Refreshing categories...</p>';
+            if (countEl) countEl.textContent = '...';
+            try {
+                const response = await fetch(`${API_BASE_URL}/categories?p=${encodeURIComponent(presentation)}&question=${encodeURIComponent(question)}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                renderCategoriesInto(listContainerEl, countEl, data);
+            } catch (error) {
+                console.error('Error fetching categories:', error);
+                listContainerEl.innerHTML = '<p class="text-center text-red-500">Could not connect to backend API.</p>';
+                if (countEl) countEl.textContent = '0';
+            }
+        }
+
+        function renderCategoriesInto(targetListEl, targetCountEl, categories, highlightCategory = null) {
+            const categoryKeys = Object.keys(categories).sort();
+            targetListEl.innerHTML = '';
+            if (targetCountEl) targetCountEl.textContent = categoryKeys.length;
+
+            if (categoryKeys.length === 0) {
+                targetListEl.innerHTML = '<p class="text-center text-gray-500">No interests categorized yet. Be the first!</p>';
                 return;
             }
 
-            submitButton.disabled = true;
-            submitButton.textContent = 'Analyzing with Gemini...';
-            messageBox.classList.add('hidden');
+            categoryKeys.forEach(categoryName => {
+                const answers = categories[categoryName];
+                const isHighlighted = highlightCategory === categoryName;
+
+                const categoryElement = document.createElement('div');
+                categoryElement.className = `category-item p-4 rounded-lg bg-white border border-gray-200 ${isHighlighted ? 'animate-pulse-new border-indigo-500' : ''}`;
+
+                const title = document.createElement('h3');
+                title.className = `text-xl font-bold ${isHighlighted ? 'text-indigo-600' : 'text-gray-700'} mb-2`;
+                title.innerHTML = `${categoryName} <span class="text-base text-gray-400 font-normal ml-2">(${answers.length} response${answers.length !== 1 ? 's' : ''})</span>`;
+
+                const answerList = document.createElement('ul');
+                answerList.className = 'list-disc ml-6 space-y-2 text-gray-600 text-sm mt-3';
+
+                answers.forEach(answer => {
+                    const listItem = document.createElement('li');
+                    listItem.textContent = answer;
+                    answerList.appendChild(listItem);
+                });
+
+                categoryElement.appendChild(title);
+                categoryElement.appendChild(answerList);
+                targetListEl.appendChild(categoryElement);
+
+                if (isHighlighted) {
+                    setTimeout(() => {
+                        categoryElement.classList.remove('animate-pulse-new', 'border-indigo-500');
+                    }, 5000);
+                }
+            });
+        }
+
+        // Charts removed from home page
+
+        /**
+         * Handles the form submission and categorization process.
+         */
+        async function submitAnswerForQuestion(question, textarea, buttonEl) {
+            const answerText = textarea.value.trim();
+            if (!answerText) {
+                showMessageFor(buttonEl, "Please enter your answer before submitting.", 'error');
+                return;
+            }
+
+            buttonEl.disabled = true;
+            const oldText = buttonEl.textContent;
+            buttonEl.textContent = 'Analyzing with Gemini...';
 
             try {
-                const response = await fetch(`${API_BASE_URL}/categorize`, {
+                const response = await fetch(`${API_BASE_URL}/categorize?p=${encodeURIComponent(presentation)}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ answer: answerText })
+                    body: JSON.stringify({ answer: answerText, question })
                 });
 
                 const result = await response.json();
 
                 if (!response.ok) {
-                    showMessage(`Error: ${result.detail || 'Failed to categorize interest.'}`, 'error');
+                    showMessageFor(buttonEl, `Error: ${result.detail || 'Failed to categorize answer.'}`, 'error');
                     return;
                 }
 
-                userAnswer.value = ''; // Clear input on success
+                textarea.value = '';
 
                 let msg = result.message;
-                if (result.is_new) {
-                    msg += " (A new category was created!)";
-                } else {
-                    msg += " (Placed into an existing category.)";
-                }
-                showMessage(msg, 'success');
+                msg += result.is_new ? ' (A new category was created!)' : ' (Placed into an existing category.)';
+                showMessageFor(buttonEl, msg, 'success');
 
-                // Render the updated list, highlighting the new category if necessary
-                renderCategories(result.all_categories, result.category);
+                // Refresh categories for this question
+                const card = buttonEl.parentElement;
+                const listEl = card.querySelector('.space-y-4');
+                const cntEl = card.querySelector('#cnt');
+                fetchAndRenderCategoriesFor(question, listEl, cntEl);
 
             } catch (error) {
                 console.error('Submission Error:', error);
-                showMessage("A network error occurred. Is the FastAPI server running?", 'error');
+                showMessageFor(buttonEl, 'A network error occurred. Is the FastAPI server running?', 'error');
             } finally {
-                submitButton.disabled = false;
-                submitButton.textContent = 'Categorize My Interest';
+                buttonEl.disabled = false;
+                buttonEl.textContent = oldText;
             }
         }
 
+        function showMessageFor(buttonEl, message, type) {
+            // Find sibling message box in the same card
+            const card = buttonEl.parentElement;
+            const msgEl = card.querySelector('.mt-4.p-3');
+            msgEl.textContent = message;
+            msgEl.classList.remove('hidden', 'bg-red-100', 'text-red-700', 'bg-green-100', 'text-green-700');
+            if (type === 'success') {
+                msgEl.classList.add('bg-green-100', 'text-green-700');
+            } else {
+                msgEl.classList.add('bg-red-100', 'text-red-700');
+            }
+            setTimeout(() => msgEl.classList.add('hidden'), 5000);
+        }
+
         // Initialize on page load
-        window.onload = fetchAndRenderCategories;
+        window.onload = function() {
+            fetchAndRenderQuestions();
+
+            // Render QR code for audience
+            const qrContainer = document.getElementById('qr-code');
+            if (qrContainer && window.QRCode) {
+                new QRCode(qrContainer, {
+                    text: pageUrl,
+                    width: 128,
+                    height: 128,
+                });
+            }
+
+            // Wire visualization link with current presentation
+            const vizLink = document.getElementById('vizLink');
+            if (vizLink) {
+                vizLink.href = `/visualize?p=${encodeURIComponent(presentation)}`;
+            }
+        };
 
     </script>
 </body>
