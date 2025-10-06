@@ -48,7 +48,7 @@
     <div class="w-full max-w-4xl">
         <div class="flex justify-end gap-2 mb-4">
             <a id="vizLink" href="/visualize" class="inline-block bg-green-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-green-700 transition duration-150 ease-in-out">Visualization</a>
-            <a href="http://localhost:8000/login" class="inline-block bg-indigo-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-indigo-700 transition duration-150 ease-in-out">Admin</a>
+            <a href="/login" class="inline-block bg-indigo-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-indigo-700 transition duration-150 ease-in-out">Admin</a>
         </div>
         <header class="text-center mb-10">
             <h1 class="text-4xl font-extrabold text-indigo-700">AI in Health Ed Categorizer</h1>
@@ -96,10 +96,10 @@
 
     <script>
         // NOTE: Ensure your FastAPI server (main.py) is running on port 8000 for this to work.
-        const API_BASE_URL = 'http://localhost:8000';
+        const API_BASE_URL = '';
         const urlParams = new URLSearchParams(window.location.search);
         const presentation = urlParams.get('p') || 'default';
-        const pageUrl = `${API_BASE_URL}/?p=${encodeURIComponent(presentation)}`;
+        const pageUrl = `${window.location.origin}/?p=${encodeURIComponent(presentation)}`;
 
         const questionsContainer = document.getElementById('questions-container');
         const categoriesList = document.getElementById('categories-list');
