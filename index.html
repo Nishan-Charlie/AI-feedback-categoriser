@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI in Health Ed: Categorizer</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for aesthetic appeal */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7fafc;
+        }
+
+        .card {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease-in-out;
+        }
+
+        .category-item {
+            border-left: 4px solid #4f46e5;
+        }
+
+        .animate-pulse-new {
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                background-color: #f0f9ff;
+            }
+
+            50% {
+                background-color: #e0f2fe;
+            }
+        }
+    </style>
+</head>
+
+<body class="p-4 md:p-8 min-h-screen bg-gray-100 flex items-start justify-center">
+
+    <div class="w-full max-w-4xl">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-extrabold text-indigo-700">AI in Health Ed Categorizer</h1>
+            <p class="text-xl text-gray-500 mt-2">Use the power of Gemini and Structured Output to classify interests.
+            </p>
+        </header>
+
+        <!-- Main Input Card -->
+        <div id="input-card" class="card bg-white p-6 rounded-xl mb-10">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-4">Question:</h2>
+            <p class="text-lg mb-4 italic text-gray-600">"What aspect of AI in health sciences education are you most
+                interested in?"</p>
+
+            <textarea id="user-answer"
+                class="w-full p-4 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 h-32 resize-none"
+                placeholder="e.g., I am fascinated by how AI can generate realistic patient simulations for surgical training, reducing the need for cadavers."
+                maxlength="500"></textarea>
+
+            <button id="submit-button"
+                class="mt-4 w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition duration-150 ease-in-out focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50 disabled:opacity-50"
+                onclick="submitAnswer()">
+                Categorize My Interest
+            </button>
+
+            <!-- Message Box for Feedback -->
+            <div id="message-box" class="mt-4 p-3 rounded-lg hidden text-sm font-medium"></div>
+        </div>
+
+        <!-- Categorized Results Card -->
+        <div id="results-card" class="card bg-white p-6 rounded-xl">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-semibold text-gray-800">Categorized Interests (<span
+                        id="category-count">0</span>)</h2>
+                <button onclick="fetchAndRenderCategories()"
+                    class="text-indigo-600 hover:text-indigo-800 transition duration-150 ease-in-out font-medium flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" viewBox="0 0 20 20"
+                        fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.564c.594.614.939 1.4.939 2.223 0 1.258-.724 2.378-1.801 2.943l-.386.193a1.001 1.001 0 11-.963-1.748l.386-.193c.69-.35 1.144-1.037 1.144-1.874 0-.462-.162-.897-.47-1.226l-.497-.52A5.002 5.002 0 005 8V6.101a1 1 0 012 0V8a3 3 0 003 3h3a1 1 0 110 2H10a5 5 0 11-5-5V3a1 1 0 011-1z"
+                            clip-rule="evenodd" />
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <div id="categories-list" class="space-y-4">
+                <p id="loading-initial" class="text-center text-gray-500">Loading existing categories...</p>
+            </div>
+        </div>
+
+        <p class="text-xs text-center text-gray-400 mt-6">
+            Backend API: http://localhost:8000
+        </p>
+    </div>
+
+    <script>
+        // NOTE: Ensure your FastAPI server (main.py) is running on port 8000 for this to work.
+        const API_BASE_URL = 'http://localhost:8000';
+
+        const submitButton = document.getElementById('submit-button');
+        const userAnswer = document.getElementById('user-answer');
+        const messageBox = document.getElementById('message-box');
+        const categoriesList = document.getElementById('categories-list');
+        const categoryCount = document.getElementById('category-count');
+
+        /**
+         * Converts a raw category string (e.g., 'Simulation_Training') into a display name
+         * (e.g., 'Simulation Training').
+         * @param {string} key 
+         * @returns {string}
+         */
+        function formatCategoryName(key) {
+            return key.replace(/_/g, ' ')
+                .split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+        }
+
+        /**
+         * Displays a temporary message to the user.
+         * @param {string} message 
+         * @param {string} type 'success' or 'error'
+         */
+        function showMessage(message, type) {
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden', 'bg-red-100', 'text-red-700', 'bg-green-100', 'text-green-700');
+
+            if (type === 'success') {
+                messageBox.classList.add('bg-green-100', 'text-green-700');
+            } else if (type === 'error') {
+                messageBox.classList.add('bg-red-100', 'text-red-700');
+            }
+
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, 5000);
+        }
+
+        /**
+         * Fetches all categories from the backend and renders them.
+         */
+        async function fetchAndRenderCategories() {
+            categoriesList.innerHTML = '<p class="text-center text-gray-500">Refreshing categories...</p>';
+            categoryCount.textContent = '...';
+            try {
+                const response = await fetch(`${API_BASE_URL}/categories`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                renderCategories(data);
+
+            } catch (error) {
+                console.error('Error fetching categories:', error);
+                categoriesList.innerHTML = '<p class="text-center text-red-500">Could not connect to backend API.</p>';
+                categoryCount.textContent = '0';
+            }
+        }
+
+        function renderCategories(categories, highlightCategory = null) {
+            const categoryKeys = Object.keys(categories).sort();
+            categoriesList.innerHTML = '';
+            categoryCount.textContent = categoryKeys.length;
+
+            if (categoryKeys.length === 0) {
+                categoriesList.innerHTML = '<p class="text-center text-gray-500">No interests categorized yet. Be the first!</p>';
+                return;
+            }
+
+            categoryKeys.forEach(categoryName => {
+                const answers = categories[categoryName];
+                const isHighlighted = highlightCategory === categoryName;
+
+                const categoryElement = document.createElement('div');
+                categoryElement.className = `category-item p-4 rounded-lg bg-white border border-gray-200 ${isHighlighted ? 'animate-pulse-new border-indigo-500' : ''}`;
+
+                const title = document.createElement('h3');
+                title.className = `text-xl font-bold ${isHighlighted ? 'text-indigo-600' : 'text-gray-700'} mb-2`;
+                title.innerHTML = `${categoryName} <span class="text-base text-gray-400 font-normal ml-2">(${answers.length} response${answers.length !== 1 ? 's' : ''})</span>`;
+
+                const answerList = document.createElement('ul');
+                answerList.className = 'list-disc ml-6 space-y-2 text-gray-600 text-sm mt-3';
+
+                answers.forEach(answer => {
+                    const listItem = document.createElement('li');
+                    listItem.textContent = answer;
+                    answerList.appendChild(listItem);
+                });
+
+                categoryElement.appendChild(title);
+                categoryElement.appendChild(answerList);
+                categoriesList.appendChild(categoryElement);
+
+                // Stop highlighting after a short period
+                if (isHighlighted) {
+                    setTimeout(() => {
+                        categoryElement.classList.remove('animate-pulse-new', 'border-indigo-500');
+                    }, 5000);
+                }
+            });
+        }
+
+        /**
+         * Handles the form submission and categorization process.
+         */
+        async function submitAnswer() {
+            const answerText = userAnswer.value.trim();
+            if (!answerText) {
+                showMessage("Please enter your interest before submitting.", 'error');
+                return;
+            }
+
+            submitButton.disabled = true;
+            submitButton.textContent = 'Analyzing with Gemini...';
+            messageBox.classList.add('hidden');
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/categorize`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ answer: answerText })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    showMessage(`Error: ${result.detail || 'Failed to categorize interest.'}`, 'error');
+                    return;
+                }
+
+                userAnswer.value = ''; // Clear input on success
+
+                let msg = result.message;
+                if (result.is_new) {
+                    msg += " (A new category was created!)";
+                } else {
+                    msg += " (Placed into an existing category.)";
+                }
+                showMessage(msg, 'success');
+
+                // Render the updated list, highlighting the new category if necessary
+                renderCategories(result.all_categories, result.category);
+
+            } catch (error) {
+                console.error('Submission Error:', error);
+                showMessage("A network error occurred. Is the FastAPI server running?", 'error');
+            } finally {
+                submitButton.disabled = false;
+                submitButton.textContent = 'Categorize My Interest';
+            }
+        }
+
+        // Initialize on page load
+        window.onload = fetchAndRenderCategories;
+
+    </script>
+</body>
+
+</html>

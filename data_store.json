@@ -1,0 +1,14 @@
+{
+  "categories": {
+    "Unspecified Interest": [
+      "hi"
+    ],
+    "Medical Imaging": [
+      "medical imaging"
+    ],
+    "Food": [
+      "nutrition",
+      "nutrition detection"
+    ]
+  }
+}
